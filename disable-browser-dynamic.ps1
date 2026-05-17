@@ -1,4 +1,4 @@
-#Requires -RunAsAdministrator
+﻿#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
     Universally disables the integrated browser across VS Code, Windsurf, and Cursor.
@@ -205,7 +205,7 @@ foreach ($editor in $editors) {
         }
     }
     
-    # 5. Cursor AI Browser Overrides (Glass Palette Lobotomy)
+    # 5. Cursor AI Browser Overrides (Glass Palette removal)
     if ($editor.Name -match "Cursor") {
         # 5.1 Neuter Cursor explicitly named AI Browser Commands
         $cursorBrowserCmds = @("workbench.action.openBrowserEditor", "workbench.action.newBrowserTab", "composer.toggleBrowserTab", "composer.openBrowserTab")
@@ -215,8 +215,8 @@ foreach ($editor in $editors) {
             if ($matches.Count -gt 0) {
                 $matchText = $matches[0].Value
                 # Only apply patch if this specific command hasn't been neutered yet
-                if (-not $matchText.Contains("Cursor browser completely lobotomized")) {
-                    $content = [regex]::Replace($content, $pattern, '${1} throw new Error("Cursor browser completely lobotomized"); ', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+                if (-not $matchText.Contains("Cursor browser completely neutralized")) {
+                    $content = [regex]::Replace($content, $pattern, '${1} throw new Error("Cursor browser completely neutralized"); ', [System.Text.RegularExpressions.RegexOptions]::Singleline)
                     $patchCount++
                     Log "  Neutered Cursor command: $cmd"
                 }
@@ -252,14 +252,14 @@ foreach ($editor in $editors) {
             Log "  Forcefully hid New Browser Tab from Command Palette"
         }
 
-        # 5.3 Lobotomize the Agent Overview 'New Browser' command
+        # 5.3 neuter the Agent Overview 'New Browser' command
         $agentBrowserPattern = '(\{id:[a-zA-Z0-9_\.]+,title:"New Browser",icon:"globe".{0,200}run:[a-zA-Z0-9_]+=>\{)'
         $abMatches = [regex]::Matches($content, $agentBrowserPattern)
         if ($abMatches.Count -gt 0) {
             $matchText = $abMatches[0].Value
-            if (-not $matchText.Contains("Cursor browser completely lobotomized")) {
+            if (-not $matchText.Contains("Cursor browser completely neutralized")) {
                 # We replace both f1:!0 with f1:!1 AND inject the error into the run function
-                $content = [regex]::Replace($content, $agentBrowserPattern, '${1} throw new Error("Cursor browser completely lobotomized"); ')
+                $content = [regex]::Replace($content, $agentBrowserPattern, '${1} throw new Error("Cursor browser completely neutralized"); ')
                 $content = [regex]::Replace($content, '(\{id:[a-zA-Z0-9_\.]+,title:"New Browser",icon:"globe".{0,150}?)f1:(!0|true)', '${1}f1:!1')
                 $patchCount += $abMatches.Count
                 Log "  Neutered Agent Overview New Browser command"
@@ -270,8 +270,8 @@ foreach ($editor in $editors) {
         $createTabPattern = '(createBrowserTab\([a-zA-Z0-9_]+=\{\}\)\{)'
         $ctMatches = [regex]::Matches($content, $createTabPattern)
         if ($ctMatches.Count -gt 0) {
-            if (-not $content.Contains('Error("Internal createBrowserTab lobotomized")')) {
-                $content = [regex]::Replace($content, $createTabPattern, '${1} throw new Error("Internal createBrowserTab lobotomized"); ')
+            if (-not $content.Contains('Error("Internal createBrowserTab neutralized")')) {
+                $content = [regex]::Replace($content, $createTabPattern, '${1} throw new Error("Internal createBrowserTab neutralized"); ')
                 $patchCount += $ctMatches.Count
                 Log "  Neutered core createBrowserTab function"
             }
@@ -304,8 +304,8 @@ foreach ($editor in $editors) {
         $sbPattern = '(show\([^)]*\)\s*\{)'
         $sbMatches = [regex]::Matches($extContent, $sbPattern)
         if ($sbMatches.Count -gt 0) {
-            if (-not $extContent.Contains('Error("Simple browser extension completely lobotomized")')) {
-                $extContent = [regex]::Replace($extContent, $sbPattern, '${1} throw new Error("Simple browser extension completely lobotomized"); ')
+            if (-not $extContent.Contains('Error("Simple browser extension completely neutralized")')) {
+                $extContent = [regex]::Replace($extContent, $sbPattern, '${1} throw new Error("Simple browser extension completely neutralized"); ')
                 $extPatchCount += $sbMatches.Count
             }
         }

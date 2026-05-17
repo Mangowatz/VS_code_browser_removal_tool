@@ -1,4 +1,4 @@
-# VS Code Browser Lobotomy
+﻿# VS Code Browser removal
 
 A highly aggressive, dynamic PowerShell script designed to completely and permanently eradicate all integrated browser functionality from VS Code, Cursor, and Windsurf. 
 
@@ -19,7 +19,7 @@ The script achieves total browser eradication through a multi-layered defense st
 1. **Dynamic Minified Source Patching**: It parses the minified `workbench.desktop.main.js` and injects JavaScript exceptions directly into the execution paths of core browser commands and APIs. Because it uses regex pattern matching, the script survives minor IDE updates where variable names might change.
 2. **Command Palette Cloaking**: It strips the internal `f1:true` flag from all browser-related UI commands, forcefully hiding them from the Command Palette drop-down so you (and AI agents) can't even see them.
 3. **Core Editor Resolver Annihilation**: It injects an immediate `throw new Error()` into the lowest-level internal constructor (`createBrowserTab`), meaning even if an AI agent bypasses the UI and attempts to spawn a tab programmatically, it instantly crashes in the background.
-4. **Simple Browser Extension Neuter**: It locates the built-in VS Code `simple-browser` extension and lobotomizes its rendering `show()` method.
+4. **Simple Browser Extension Neuter**: It locates the built-in VS Code `simple-browser` extension and neuters its rendering `show()` method.
 5. **AI Specific Defenses**:
    - Destroys Cursor Composer's hidden AI browser commands (`workbench.action.openBrowserEditor`, `composer.openBrowserTab`, etc.).
    - Disables the native `open_browser_page` tool used by Copilot Chat.
@@ -40,7 +40,7 @@ The script achieves total browser eradication through a multi-layered defense st
 5. Open your IDE. Integrated browsers are now dead.
 
 ## Maintenance
-Because this script modifies the internal IDE files, **every time your IDE installs an update, the files will be overwritten**. You must re-run this script after every IDE update to restore the lobotomy.
+Because this script modifies the internal IDE files, **every time your IDE installs an update, the files will be overwritten**. You must re-run this script after every IDE update to restore the removal.
 
 ## Backups and Logs
 Every time the script runs, it generates a comprehensive log file and `.bak` backups of the unpatched JavaScript files in:
