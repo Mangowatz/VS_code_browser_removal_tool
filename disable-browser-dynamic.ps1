@@ -1,4 +1,4 @@
-﻿#Requires -RunAsAdministrator
+#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
     Universally disables the integrated browser across VS Code, Windsurf, and Cursor.
@@ -13,6 +13,9 @@ $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $backupDir = "$env:USERPROFILE\vscode-simple-browser-backup"
 if (-not (Test-Path $backupDir)) { New-Item -ItemType Directory -Path $backupDir | Out-Null }
 $logFile = "$backupDir\disable-browser-dynamic-$timestamp.log"
+
+# Define a UTF8 encoding without BOM. Writing a BOM causes Node.js JSON parsers to crash, breaking the editor.
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
 
 function Log($msg) {
     $entry = "$(Get-Date -Format 'HH:mm:ss') $msg"
@@ -65,23 +68,29 @@ foreach ($editor in $editors) {
         continue
     }
     
-    # We ignore any folders named '_' which are sometimes used for backups/staging in Cursor
-    $workbenchJsFiles = Get-ChildItem $editor.InstallBase -Recurse -Filter "workbench.desktop.main.js" -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\_\\' }
-    if ($workbenchJsFiles.Count -eq 0) {
-        Log "Could not find workbench.desktop.main.js in $($editor.InstallBase)"
+    $targetFiles = @("workbench.desktop.main.js", "workbench.glass.main.js")
+    $allWorkbenchFiles = @()
+    foreach ($tf in $targetFiles) {
+        $foundFiles = Get-ChildItem $editor.InstallBase -Recurse -Filter $tf -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\_\\' }
+        if ($foundFiles) { $allWorkbenchFiles += $foundFiles }
+    }
+    
+    if ($allWorkbenchFiles.Count -eq 0) {
+        Log "Could not find any workbench JS files in $($editor.InstallBase)"
         continue
     }
     
-    $workbenchJs = $workbenchJsFiles[0].FullName
-    Log "Found workbench JS: $workbenchJs"
-    
-    # Backup
-    $backupFile = "$backupDir\$($editor.Name -replace '[^\w]','_')_workbench.desktop.main.js.$timestamp.bak"
-    Copy-Item $workbenchJs $backupFile
-    Log "Created backup at $backupFile"
-    
-    $content = [System.IO.File]::ReadAllText($workbenchJs)
-    $patchCount = 0
+    foreach ($fileObj in $allWorkbenchFiles) {
+        $workbenchJs = $fileObj.FullName
+        Log "Found workbench JS: $workbenchJs"
+        
+        # Backup
+        $backupFile = "$backupDir\$($editor.Name -replace '[^\w]','_')_$($fileObj.Name).$timestamp.bak"
+        Copy-Item $workbenchJs $backupFile
+        Log "Created backup at $backupFile"
+        
+        $content = [System.IO.File]::ReadAllText($workbenchJs)
+        $patchCount = 0
     
     # 2. Dynamic Regex Patching for Command Palette visibility (f1 flag)
     foreach ($title in $titles) {
@@ -101,6 +110,15 @@ foreach ($editor in $editors) {
             $patchCount += $matches.Count
             Log "  Patched f1 flag for: $title"
         }
+    }
+
+    # Hide any titles we stripped to "" from the F1 menu
+    $emptyTitleF1Pattern = '(title:[a-zA-Z0-9_\$]+\(\d+,""\)[^}]*?f1:)(?:!0|true)'
+    $emptyTitleMatches = [regex]::Matches($content, $emptyTitleF1Pattern)
+    if ($emptyTitleMatches.Count -gt 0) {
+        $content = [regex]::Replace($content, $emptyTitleF1Pattern, '${1}!1')
+        $patchCount += $emptyTitleMatches.Count
+        Log "  Patched f1 flag for $($emptyTitleMatches.Count) stripped titles"
     }
     
     # 3. Neuter openBrowserTab programmatic API
@@ -208,18 +226,35 @@ foreach ($editor in $editors) {
     # 5. Cursor AI Browser Overrides (Glass Palette removal)
     if ($editor.Name -match "Cursor") {
         # 5.1 Neuter Cursor explicitly named AI Browser Commands
-        $cursorBrowserCmds = @("workbench.action.openBrowserEditor", "workbench.action.newBrowserTab", "composer.toggleBrowserTab", "composer.openBrowserTab")
+        $cursorBrowserCmds = @(
+            "workbench.action.openBrowserEditor", 
+            "workbench.action.newBrowserTab", 
+            "composer.toggleBrowserTab", 
+            "composer.openBrowserTab",
+            "workbench.action.focusOrOpenBrowserEditor",
+            "workbench.action.reloadBrowserTab",
+            "workbench.action.focusBrowserLocationBar",
+            "glass.openBrowserTab"
+        )
         foreach ($cmd in $cursorBrowserCmds) {
+            # Legacy class-based patching
             $pattern = '(class [a-zA-Z0-9_\$]+ extends [a-zA-Z0-9_\$]+\s*\{\s*static\s*\{\s*this\.ID="' + $cmd + '"\s*\}.*?run\([^)]*\)\s*\{)'
             $matches = [regex]::Matches($content, $pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
             if ($matches.Count -gt 0) {
                 $matchText = $matches[0].Value
-                # Only apply patch if this specific command hasn't been neutered yet
                 if (-not $matchText.Contains("Cursor browser completely neutralized")) {
                     $content = [regex]::Replace($content, $pattern, '${1} throw new Error("Cursor browser completely neutralized"); ', [System.Text.RegularExpressions.RegexOptions]::Singleline)
                     $patchCount++
-                    Log "  Neutered Cursor command: $cmd"
+                    Log "  Neutered Cursor command (legacy): $cmd"
                 }
+            }
+
+            # New universal string-level neutering (replaces registrations and calls alike)
+            $searchString = '"' + $cmd + '"'
+            if ($content.Contains($searchString)) {
+                $content = $content.Replace($searchString, '"disabled.' + $cmd + '"')
+                $patchCount++
+                Log "  Universally neutered command literal: $cmd"
             }
         }
 
@@ -289,41 +324,46 @@ foreach ($editor in $editors) {
         }
     }
 
-    # 6. Neuter Built-in Simple Browser Extension
-    $extPath = Join-Path (Split-Path $workbenchJs -Parent) "..\..\..\extensions\simple-browser\dist\extension.js"
-    # For some installations, it might be in a different relative path
-    if (-not (Test-Path $extPath)) {
-        $extPath = Join-Path $editor.InstallBase "resources\app\extensions\simple-browser\dist\extension.js"
-    }
-
-    if (Test-Path $extPath) {
-        $extContent = Get-Content $extPath -Raw
-        $extPatchCount = 0
-
-        # Universally match the show() methods in the simple browser extension
-        $sbPattern = '(show\([^)]*\)\s*\{)'
-        $sbMatches = [regex]::Matches($extContent, $sbPattern)
-        if ($sbMatches.Count -gt 0) {
-            if (-not $extContent.Contains('Error("Simple browser extension completely neutralized")')) {
-                $extContent = [regex]::Replace($extContent, $sbPattern, '${1} throw new Error("Simple browser extension completely neutralized"); ')
-                $extPatchCount += $sbMatches.Count
-            }
-        }
-
-        if ($extPatchCount -gt 0) {
-            $extBackup = "$backupDir\$($editor.Name -replace '[^\w]','_')_simple-browser-extension.js.$timestamp.bak"
-            Copy-Item $extPath $extBackup
-            [System.IO.File]::WriteAllText($extPath, $extContent, [System.Text.Encoding]::UTF8)
-            Log "  Neutered simple browser extension ($extPatchCount patches)"
-        }
+    # 6. Neuter simple browser extension (Rename folder)
+    $extDir = Join-Path $editor.InstallBase "resources\app\extensions\simple-browser"
+    $extDisabledDir = Join-Path $editor.InstallBase "resources\app\extensions\simple-browser.disabled"
+    if (Test-Path $extDir) {
+        Rename-Item -Path $extDir -NewName "simple-browser.disabled" -Force
+        Log "  Disabled simple browser extension entirely"
     }
 
     
-    if ($patchCount -gt 0) {
-        [System.IO.File]::WriteAllText($workbenchJs, $content, [System.Text.Encoding]::UTF8)
-        Log "Saved $patchCount dynamic patches to workbench JS."
-    } else {
-        Log "No patches were needed or found."
+        if ($patchCount -gt 0) {
+            [System.IO.File]::WriteAllText($workbenchJs, $content, $utf8NoBom)
+            Log "Saved $patchCount dynamic patches to workbench JS: $($fileObj.Name)."
+        } else {
+            Log "No patches were needed or found for $($fileObj.Name)."
+        }
+    } # End of $allWorkbenchFiles loop
+
+    # 7. Strip UI strings from nls.messages.json (Command Palette Localizations)
+    $nlsPath = Join-Path $editor.InstallBase "resources\app\out\nls.messages.json"
+    if (Test-Path $nlsPath) {
+        $nlsContent = Get-Content $nlsPath -Raw
+        $nlsPatchCount = 0
+        $nlsTitles = @(
+            "New Browser Tab", "Focus Browser Location Bar", "Open cursor.com in Browser", 
+            "Reload Browser Tab", "Focus or Open Browser", "Simple Browser: Show", 
+            "Open Port in Browser"
+        )
+        foreach ($nt in $nlsTitles) {
+            $searchString = '"' + $nt + '"'
+            if ($nlsContent.Contains($searchString)) {
+                $nlsContent = $nlsContent.Replace($searchString, '""')
+                $nlsPatchCount++
+            }
+        }
+        if ($nlsPatchCount -gt 0) {
+            $nlsBackup = "$backupDir\$($editor.Name -replace '[^\w]','_')_nls.messages.json.$timestamp.bak"
+            Copy-Item $nlsPath $nlsBackup
+            [System.IO.File]::WriteAllText($nlsPath, $nlsContent, $utf8NoBom)
+            Log "  Stripped $nlsPatchCount localized titles from nls.messages.json"
+        }
     }
     
     # 5. Keybindings.json universal overrides
@@ -349,7 +389,9 @@ foreach ($editor in $editors) {
         "composer.toggleBrowserTab",
         "composer.openBrowserTab",
         "composer.closeBrowserTab",
-        "workbench.action.openBrowserEditor"
+        "workbench.action.openBrowserEditor",
+        "workbench.action.focusOrOpenBrowserEditor",
+        "glass.openBrowserTab"
     )
     
     $kbContent = "// Universal browser removal overrides`r`n["
@@ -357,12 +399,17 @@ foreach ($editor in $editors) {
         $comma = if ($i -lt $browserCommands.Count - 1) { "," } else { "" }
         $kbContent += "`r`n  { `"key`": `"`", `"command`": `"$($browserCommands[$i])`", `"when`": `"false`" }$comma"
     }
+    $kbContent += ","
     $kbContent += "`r`n  { `"key`": `"ctrl+t`", `"command`": `"-workbench.action.newBrowserTab`" },"
-    $kbContent += "`r`n  { `"key`": `"ctrl+t`", `"command`": `"cursor.ai.dummy`" }"
+    $kbContent += "`r`n  { `"key`": `"ctrl+t`", `"command`": `"cursor.ai.dummy`" },"
+    $kbContent += "`r`n  { `"key`": `"ctrl+shift+b`", `"command`": `"-glass.openBrowserTab`" },"
+    $kbContent += "`r`n  { `"key`": `"ctrl+shift+b`", `"command`": `"-workbench.action.focusOrOpenBrowserEditor`" },"
+    $kbContent += "`r`n  { `"key`": `"ctrl+shift+b`", `"command`": `"-workbench.action.openBrowserEditor`" },"
+    $kbContent += "`r`n  { `"key`": `"ctrl+shift+b`", `"command`": `"workbench.action.tasks.build`" }"
     $kbContent += "
 ]"
     
-    Set-Content -Path $kbPath -Value $kbContent -Encoding UTF8
+    [System.IO.File]::WriteAllText($kbPath, $kbContent, $utf8NoBom)
     Log "Updated keybindings"
 }
 
