@@ -1,0 +1,26 @@
+&&t.push({id:"action-open-Browser",name:"",description:"Open a 
+----------------------------------------
+",r={id:"Browser:connection",label:n,rawText:n,secondaryText:qAp,type:"
+----------------------------------------
+Editor",{url:e,preserveFocus:!0,trackingId:"open_Browser_urls_service"})}this._latestUrl=e,this._onDidChangeUrls.fire(e)}},oer=__decorate([__param(0,In),__param(1,zn),__param(2,td),__param(3,j7t),__param(4,
+----------------------------------------
+writeText(c),beforeAction:r})),o}return(t==="http"||t==="resource"&&i)&&o.push(M2n({id:"openInCursorBrowser",label:"Open in Cursor 
+----------------------------------------
+ebarVisible:!1,sidebarLocation:"left",partWidths:{},panelMaximized:!1},type:"default"},{id:"default-Browser",name:w(2928,null),state:{agentsVisible:!1,chatVisible:!0,editorsVisible:!0,panelVisible:!1,sidebarVisible:!1,sidebarLocation:"left",partWidths:{},pa
+----------------------------------------
+"mainThreadWebview-markdown.preview",label:w(3645,null),priority:a_.builtin},{id:"mainThreadWebview-BrowserPreview",label:w(3646,null),priority:a_.builtin}],lge.AUTO_LOCK_REMOVE_EDITORS=new Set(["vscode-interactive-input","interactive","vscode.markdown.prev
+----------------------------------------
+_configure",order:10}),On.appendMenuItem(Re.EditorTitle,{command:{id:"disabled.workbench.action.openBrowserEditor",title:w(3399,null),icon:Ce.globe},group:"0_global"});function uge(e,t,n,i,r){const s={command:{id:e.id,title:e.title,icon:e.icon,toggled:e.tog
+----------------------------------------
+text:w(3660,null),id:"workbench.action.quickOpen"},Bdm={text:w(3661,null),id:"disabled.composer.openBrowserTab"},$dm={text:w(3662,null),id:wye},Jfa={text:w(3663,null),id:"workbench.action.togglePanel"},Udm={text:w(3664,null),id:"workbench.action.togglePanel
+----------------------------------------
+()=>{t(),e.clipboardService.writeText(M$p(i,e.websiteUrl))}}]}]:[{id:"link",items:[{id:"openInCursorBrowser",label:"Open in Cursor 
+----------------------------------------
+iewCursor:n()})),C=ue(()=>l()?.surface??"inApp"),E=[{id:"inApp",label:"Inside Cursor"},{id:"externalBrowser",label:"Default 
+----------------------------------------
+ce),this._register(this.lifecycleService.onWillShutdown(s=>{s.join(this.destroyAllViews(),{id:"join.BrowserViews",label:"Cleaning up 
+----------------------------------------
+eViewId()??e.getAllViewIds()[0];return t?[t]:[]}Ge(class extends ct{constructor(){super({id:"cursor.BrowserView.debug.crashRenderer",title:De(5244,"Developer: Crash 
+----------------------------------------
+wId} (${c.error??"unknown"})`).join(", ")}`)}}),Ge(class extends ct{constructor(){super({id:"cursor.BrowserView.debug.orphanView",title:De(5245,"Developer: Orphan 
+----------------------------------------

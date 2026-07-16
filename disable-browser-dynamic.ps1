@@ -55,7 +55,7 @@ $titles = @(
     "Focus URL Input", "Find in Page", "Toggle Developer Tools",
     "Clear Storage (Ephemeral)", "Clear Storage (Global)", "Clear Storage (Workspace)",
     "Add Element to Chat", "Add Console Logs to Chat", "Open Integrated Browser",
-    "Quick Open Browser Tab...", "Open URL", "Simple Browser: Show"
+    "Quick Open Browser Tab...", "Open URL", "Simple Browser: Show", "Open Browser"
 )
 
 foreach ($editor in $editors) {
@@ -160,8 +160,8 @@ foreach ($editor in $editors) {
     $openIntegratedBrowserPattern = '("Open Integrated Browser".*?async run\([^)]*\)\s*\{)'
     $oibMatches = [regex]::Matches($content, $openIntegratedBrowserPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
     if ($oibMatches.Count -gt 0) {
-        if (-not $content.Contains('Error("Integrated browser forcibly disabled")')) {
-            $content = [regex]::Replace($content, $openIntegratedBrowserPattern, '${1} throw new Error("Integrated browser forcibly disabled"); ', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        if (-not $content.Contains('Error("Integrated browser removed")')) {
+            $content = [regex]::Replace($content, $openIntegratedBrowserPattern, '${1} throw new Error("Integrated browser removed"); ', [System.Text.RegularExpressions.RegexOptions]::Singleline)
             $patchCount++
             Log "  Neutered Open Integrated Browser command"
         }
@@ -171,8 +171,8 @@ foreach ($editor in $editors) {
     $quickOpenBrowserPattern = '("Quick Open Browser Tab\.\.\.".*?run\([^)]*\)\s*\{)'
     $qobMatches = [regex]::Matches($content, $quickOpenBrowserPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
     if ($qobMatches.Count -gt 0) {
-        if (-not $content.Contains('Error("Quick browser forcibly disabled")')) {
-            $content = [regex]::Replace($content, $quickOpenBrowserPattern, '${1} throw new Error("Quick browser forcibly disabled"); ', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        if (-not $content.Contains('Error("Quick browser removed")')) {
+            $content = [regex]::Replace($content, $quickOpenBrowserPattern, '${1} throw new Error("Quick browser removed"); ', [System.Text.RegularExpressions.RegexOptions]::Singleline)
             $patchCount++
             Log "  Neutered Quick Open Browser Tab command"
         }
@@ -182,8 +182,8 @@ foreach ($editor in $editors) {
     $browserResolverPattern = '(createEditorInput:\(\{resource:[a-zA-Z0-9_]+,options:[a-zA-Z0-9_]+\}\)=>\{)(let [a-zA-Z0-9_]+=[a-zA-Z0-9_\.]+\.parse[^}]*Invalid browser view resource)'
     $brMatches = [regex]::Matches($content, $browserResolverPattern)
     if ($brMatches.Count -gt 0) {
-        if (-not $content.Contains('Error("Integrated browser editor forcefully disabled")')) {
-            $content = [regex]::Replace($content, $browserResolverPattern, '${1} throw new Error("Integrated browser editor forcefully disabled"); ${2}')
+        if (-not $content.Contains('Error("Integrated browser editor removed")')) {
+            $content = [regex]::Replace($content, $browserResolverPattern, '${1} throw new Error("Integrated browser editor removed"); ${2}')
             $patchCount++
             Log "  Neutered Native Browser Editor Resolver"
         }
@@ -238,23 +238,90 @@ foreach ($editor in $editors) {
         $cursorBrowserCmds = @(
             "workbench.action.openBrowserEditor", 
             "workbench.action.newBrowserTab", 
+            "workbench.action.newBrowser",
+            "cursor.newBrowser",
+            "cursor.newBrowserTab",
             "composer.toggleBrowserTab", 
             "composer.openBrowserTab",
+            "composer.newBrowser",
             "workbench.action.focusOrOpenBrowserEditor",
             "workbench.action.reloadBrowserTab",
             "workbench.action.focusBrowserLocationBar",
-            "glass.openBrowserTab"
+            "glass.openBrowserTab",
+            "openInCursorBrowser",
+            "action-open-browser",
+            "simpleBrowser.show"
         )
+        
+        # Dynamically discover any other command IDs by their exact UI titles
+        $discoverTitles = @("New Browser Tab", "New Browser", "Open Browser")
+        foreach ($dt in $discoverTitles) {
+            # Check title after id
+            $findPattern = 'id:\s*"([a-zA-Z0-9_\.-]+)"(?:(?!id:).){0,150}?title:\s*(?:[a-zA-Z0-9_\$]+\(\d+,\s*"' + $dt + '"\)|(?:\{[^}]*value:\s*"' + $dt + '"|"' + $dt + '"))'
+            $matches = [regex]::Matches($content, $findPattern)
+            foreach ($match in $matches) {
+                $foundId = $match.Groups[1].Value
+                if ($cursorBrowserCmds -notcontains $foundId) {
+                    $cursorBrowserCmds += $foundId
+                    Log "  Dynamically discovered browser command ID: $foundId for title '$dt'"
+                }
+            }
+            
+            # Check id after title
+            $findPatternReverse = 'title:\s*(?:[a-zA-Z0-9_\$]+\(\d+,\s*"' + $dt + '"\)|(?:\{[^}]*value:\s*"' + $dt + '"|"' + $dt + '"))(?:(?!title:).){0,150}?id:\s*"([a-zA-Z0-9_\.-]+)"'
+            $matchesRev = [regex]::Matches($content, $findPatternReverse)
+            foreach ($match in $matchesRev) {
+                $foundId = $match.Groups[1].Value
+                if ($cursorBrowserCmds -notcontains $foundId) {
+                    $cursorBrowserCmds += $foundId
+                    Log "  Dynamically discovered browser command ID: $foundId for title '$dt'"
+                }
+            }
+        }
+        
         foreach ($cmd in $cursorBrowserCmds) {
-            # Legacy class-based patching
-            $pattern = '(class [a-zA-Z0-9_\$]+ extends [a-zA-Z0-9_\$]+\s*\{\s*static\s*\{\s*this\.ID="' + $cmd + '"\s*\}.*?run\([^)]*\)\s*\{)'
+            # Break legacy Class.ID assignments (which happen after the class definition)
+            $idAssignPattern = '\.ID="(?:disabled\.)?' + $cmd + '"'
+            $matchesId = [regex]::Matches($content, $idAssignPattern)
+            if ($matchesId.Count -gt 0) {
+                $content = [regex]::Replace($content, $idAssignPattern, '.ID="broken_' + $cmd + '"')
+                $patchCount++
+                Log "  Neutered Cursor command (Class.ID breaking): $cmd"
+            }
+
+            # Legacy class-based patching (for older versions)
+            $pattern = '(class [a-zA-Z0-9_\$]+ extends [a-zA-Z0-9_\$]+\s*\{\s*static\s*\{\s*this\.ID="(?:disabled\.)?' + $cmd + '"\s*\}.*?run\([^)]*\)\s*\{)'
             $matches = [regex]::Matches($content, $pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
             if ($matches.Count -gt 0) {
                 $matchText = $matches[0].Value
-                if (-not $matchText.Contains("Cursor browser completely neutralized")) {
-                    $content = [regex]::Replace($content, $pattern, '${1} throw new Error("Cursor browser completely neutralized"); ', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+                if (-not $matchText.Contains("Cursor browser removed")) {
+                    $content = [regex]::Replace($content, $pattern, '${1} throw new Error("Cursor browser removed"); ', [System.Text.RegularExpressions.RegexOptions]::Singleline)
                     $patchCount++
                     Log "  Neutered Cursor command (legacy): $cmd"
+                }
+            }
+
+            # Object-based patching (registerAction2({ id: "...", run(e,t) { ... } }))
+            $objPattern = '(id:\s*"(?:disabled\.)?' + $cmd + '"(?:(?!id:).){0,250}?(?:async\s+)?run\s*\([^)]*\)\s*\{)'
+            $objMatches = [regex]::Matches($content, $objPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+            if ($objMatches.Count -gt 0) {
+                $matchText = $objMatches[0].Value
+                if (-not $matchText.Contains("Browser removed")) {
+                    $content = [regex]::Replace($content, $objPattern, '${1} throw new Error("Browser removed"); ', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+                    $patchCount++
+                    Log "  Neutered Cursor command (object): $cmd"
+                }
+            }
+
+            # Arrow-function patching (registerAction2({ id: "...", run: async (e) => { ... } }))
+            $arrowPattern = '(id:\s*"(?:disabled\.)?' + $cmd + '"(?:(?!id:).){0,250}?run\s*:\s*(?:async\s*)?(?:[a-zA-Z0-9_]+|\([^)]*\))\s*=>\s*\{)'
+            $arrowMatches = [regex]::Matches($content, $arrowPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+            if ($arrowMatches.Count -gt 0) {
+                $matchText = $arrowMatches[0].Value
+                if (-not $matchText.Contains("Browser removed")) {
+                    $content = [regex]::Replace($content, $arrowPattern, '${1} throw new Error("Browser removed"); ', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+                    $patchCount++
+                    Log "  Neutered Cursor command (arrow): $cmd"
                 }
             }
 
@@ -268,7 +335,7 @@ foreach ($editor in $editors) {
         }
 
         # The AI browser commands need their literal UI titles stripped to drop them from the glass palette
-        $cursorTitles = @("New Browser Tab", "Focus Browser Location Bar", "Open cursor.com in Browser", "Reload Browser Tab")
+        $cursorTitles = @("New Browser Tab", "New Browser", "Open Browser", "Focus Browser Location Bar", "Open cursor.com in Browser", "Reload Browser Tab")
         foreach ($ct in $cursorTitles) {
             $searchString = '"' + $ct + '"'
             if ($content.Contains($searchString)) {
@@ -301,9 +368,9 @@ foreach ($editor in $editors) {
         $abMatches = [regex]::Matches($content, $agentBrowserPattern)
         if ($abMatches.Count -gt 0) {
             $matchText = $abMatches[0].Value
-            if (-not $matchText.Contains("Cursor browser completely neutralized")) {
+            if (-not $matchText.Contains("Cursor browser removed")) {
                 # We replace both f1:!0 with f1:!1 AND inject the error into the run function
-                $content = [regex]::Replace($content, $agentBrowserPattern, '${1} throw new Error("Cursor browser completely neutralized"); ')
+                $content = [regex]::Replace($content, $agentBrowserPattern, '${1} throw new Error("Cursor browser removed"); ')
                 $content = [regex]::Replace($content, '(\{id:[a-zA-Z0-9_\.]+,title:"New Browser",icon:"globe".{0,150}?)f1:(!0|true)', '${1}f1:!1')
                 $patchCount += $abMatches.Count
                 Log "  Neutered Agent Overview New Browser command"
@@ -314,8 +381,8 @@ foreach ($editor in $editors) {
         $createTabPattern = '(createBrowserTab\([a-zA-Z0-9_]+=\{\}\)\{)'
         $ctMatches = [regex]::Matches($content, $createTabPattern)
         if ($ctMatches.Count -gt 0) {
-            if (-not $content.Contains('Error("Internal createBrowserTab neutralized")')) {
-                $content = [regex]::Replace($content, $createTabPattern, '${1} throw new Error("Internal createBrowserTab neutralized"); ')
+            if (-not $content.Contains('Error("Internal createBrowserTab removed")')) {
+                $content = [regex]::Replace($content, $createTabPattern, '${1} throw new Error("Internal createBrowserTab removed"); ')
                 $patchCount += $ctMatches.Count
                 Log "  Neutered core createBrowserTab function"
             }
@@ -356,7 +423,7 @@ foreach ($editor in $editors) {
         $nlsContent = Get-Content $nlsPath -Raw
         $nlsPatchCount = 0
         $nlsTitles = @(
-            "New Browser Tab", "Focus Browser Location Bar", "Open cursor.com in Browser", 
+            "New Browser Tab", "New Browser", "Open Browser", "Focus Browser Location Bar", "Open cursor.com in Browser", 
             "Reload Browser Tab", "Focus or Open Browser", "Simple Browser: Show", 
             "Open Port in Browser"
         )
