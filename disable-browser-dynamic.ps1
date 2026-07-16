@@ -55,7 +55,7 @@ $titles = @(
     "Focus URL Input", "Find in Page", "Toggle Developer Tools",
     "Clear Storage (Ephemeral)", "Clear Storage (Global)", "Clear Storage (Workspace)",
     "Add Element to Chat", "Add Console Logs to Chat", "Open Integrated Browser",
-    "Quick Open Browser Tab...", "Open URL"
+    "Quick Open Browser Tab...", "Open URL", "Simple Browser: Show"
 )
 
 foreach ($editor in $editors) {
@@ -112,13 +112,22 @@ foreach ($editor in $editors) {
         }
     }
 
-    # Hide any titles we stripped to "" from the F1 menu
-    $emptyTitleF1Pattern = '(title:[a-zA-Z0-9_\$]+\(\d+,""\)[^}]*?f1:)(?:!0|true)'
+    # Hide any titles we stripped to "" from the F1 menu (handles both localize calls and object syntax)
+    $emptyTitleF1Pattern = '(title:\s*(?:[a-zA-Z0-9_\$]+\(\d+,\s*""\)|""|\{\s*value:\s*""[^}]*\}|\{\s*original:\s*""[^}]*\})(?:(?!title:).){0,150}?)f1\s*:\s*(?:!0|true)'
     $emptyTitleMatches = [regex]::Matches($content, $emptyTitleF1Pattern)
     if ($emptyTitleMatches.Count -gt 0) {
-        $content = [regex]::Replace($content, $emptyTitleF1Pattern, '${1}!1')
+        $content = [regex]::Replace($content, $emptyTitleF1Pattern, '${1}f1:!1')
         $patchCount += $emptyTitleMatches.Count
         Log "  Patched f1 flag for $($emptyTitleMatches.Count) stripped titles"
+    }
+
+    # Hide any disabled.* commands from the F1 menu
+    $disabledIdF1Pattern = '(id:\s*"disabled\.[^"]+"(?:(?!id:).){0,200}?)f1\s*:\s*(?:!0|true)'
+    $disabledMatches = [regex]::Matches($content, $disabledIdF1Pattern)
+    if ($disabledMatches.Count -gt 0) {
+        $content = [regex]::Replace($content, $disabledIdF1Pattern, '${1}f1:!1')
+        $patchCount += $disabledMatches.Count
+        Log "  Patched f1 flag for $($disabledMatches.Count) disabled.* commands"
     }
     
     # 3. Neuter openBrowserTab programmatic API
