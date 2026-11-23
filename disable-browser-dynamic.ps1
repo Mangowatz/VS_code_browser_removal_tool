@@ -46,6 +46,11 @@ $editors = @(
         Name = "Cursor (AppData)"
         InstallBase = "$env:LOCALAPPDATA\Programs\Cursor"
         Keybindings = "$env:APPDATA\Cursor\User\keybindings.json"
+    },
+    @{
+        Name = "Antigravity IDE"
+        InstallBase = "$env:LOCALAPPDATA\Programs\Antigravity IDE"
+        Keybindings = "$env:APPDATA\Antigravity\User\keybindings.json"
     }
 )
 
@@ -54,8 +59,14 @@ $titles = @(
     "Go Back", "Go Forward", "Reload", "Hard Reload", "Open in External Browser",
     "Focus URL Input", "Find in Page", "Toggle Developer Tools",
     "Clear Storage (Ephemeral)", "Clear Storage (Global)", "Clear Storage (Workspace)",
+    "Clear Storage (Agent)",
     "Add Element to Chat", "Add Console Logs to Chat", "Open Integrated Browser",
-    "Quick Open Browser Tab...", "Open URL", "Simple Browser: Show", "Open Browser"
+    "Quick Open Browser Tab...", "Open URL", "Simple Browser: Show", "Open Browser",
+    "New Integrated Browser", "New Tab", "Close All Browser Tabs",
+    "Close All Browser Tabs in Group", "Toggle Favorite", "Show History",
+    "Manage Permissions", "Add Screenshot to Chat", "Add Area Screenshot to Chat",
+    "Add Full Page Screenshot to Chat", "Add Element Comment to Chat",
+    "Open Settings", "Browser"
 )
 
 foreach ($editor in $editors) {
@@ -68,7 +79,7 @@ foreach ($editor in $editors) {
         continue
     }
     
-    $targetFiles = @("workbench.desktop.main.js", "workbench.glass.main.js")
+    $targetFiles = @("workbench.desktop.main.js", "workbench.glass.main.js", "sessions.desktop.main.js")
     $allWorkbenchFiles = @()
     foreach ($tf in $targetFiles) {
         $foundFiles = Get-ChildItem $editor.InstallBase -Recurse -Filter $tf -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\_\\' }
@@ -189,6 +200,121 @@ foreach ($editor in $editors) {
         }
     }
     
+    # 3.5 Neuter ALL VS Code Native Browser Commands (workbench.action.browser.*)
+    # VS Code 1.90+ has a full browser namespace: prefix="workbench.action.browser" with command enum.
+    # The command IDs are built dynamically via template literals from the prefix, so we neuter the
+    # base prefix itself, which breaks ALL browser commands at once.
+    $browserPrefixPattern = '=\s*"workbench\.action\.browser"'
+    $prefixMatches = [regex]::Matches($content, $browserPrefixPattern)
+    if ($prefixMatches.Count -gt 0) {
+        $content = [regex]::Replace($content, $browserPrefixPattern, '="disabled.workbench.action.browser"')
+        $patchCount += $prefixMatches.Count
+        Log "  Neutered browser command prefix ($($prefixMatches.Count) matches) - disables all workbench.action.browser.* commands"
+    }
+
+    # 3.6 Strip the "Browser" button from the Title Bar (Agents window right toolbar)
+    # The action registers id: *.OpenOrList with menu: { id: *.TitleBar, ... }.
+    # Even if hidden by default, VS Code's toolbar context menu exposes EVERY item
+    # registered to *.TitleBar as a toggleable checkbox in the right-click menu!
+    # Removing menu:{id:*.TitleBar...} completely removes "Browser" from that menu.
+    $titleBarMenuPattern = 'menu:\{id:[a-zA-Z0-9_\$]+\.TitleBar,group:"navigation",order:10,when:[^}]+\}'
+    $tbMatches = [regex]::Matches($content, $titleBarMenuPattern)
+    if ($tbMatches.Count -gt 0) {
+        $content = [regex]::Replace($content, $titleBarMenuPattern, 'menu:[]')
+        $patchCount += $tbMatches.Count
+        Log "  Completely removed Browser from TitleBar menu / toolbar dropdown ($($tbMatches.Count) matches)"
+    }
+
+    # Also neuter *.OpenOrList run() so clicking it can never open anything
+    $openOrListRunPattern = '(\.OpenOrList.+?\}\)\s*\}\s*async\s+run\([a-zA-Z0-9_]+\)\{)'
+    $runMatches = [regex]::Matches($content, $openOrListRunPattern)
+    if ($runMatches.Count -gt 0) {
+        if (-not $content.Contains('Error("Browser command removed")')) {
+            $content = [regex]::Replace($content, $openOrListRunPattern, '${1} throw new Error("Browser command removed"); ')
+            $patchCount += $runMatches.Count
+            Log "  Neutered OpenOrList run implementation ($($runMatches.Count) matches)"
+        }
+    }
+
+    # 3.7 Remove "New Integrated Browser" from the editor New Tab dropdown
+    # It registers via class extending Zre/Zde with id: *.Open+".fromNewTabButton"
+    $newTabButtonPattern = '(?:\$|G)\(class extends (?:Zre|Zde)\{constructor\(\)\{super\(\{id:[a-zA-Z0-9_\$]+\.Open\+"\.fromNewTabButton",title:[a-zA-Z0-9_\$]+\(\d+,"New Integrated Browser"\),icon:[a-zA-Z0-9_\$]+\.globe,order:4\}\)\}openTab\([a-zA-Z0-9_]+\)\{return [^}]+\}\}\);'
+    $ntbMatches = [regex]::Matches($content, $newTabButtonPattern)
+    if ($ntbMatches.Count -gt 0) {
+        $content = [regex]::Replace($content, $newTabButtonPattern, '/* New Integrated Browser tab removed */')
+        $patchCount += $ntbMatches.Count
+        Log "  Completely unregistered 'New Integrated Browser' from New Tab dropdown ($($ntbMatches.Count) matches)"
+    }
+
+    # Also neuter the openTab function in any browser tab class if still present
+    $openTabPattern = '(openTab\([a-zA-Z0-9_]+\)\{return [a-zA-Z0-9_]+\.get\([a-zA-Z0-9_]+\)\.executeCommand\([a-zA-Z0-9_\$]+\.Open\)\})'
+    $otMatches = [regex]::Matches($content, $openTabPattern)
+    if ($otMatches.Count -gt 0) {
+        if (-not $content.Contains('Error("Integrated browser tab removed")')) {
+            $content = [regex]::Replace($content, $openTabPattern, 'openTab(){throw new Error("Integrated browser tab removed");}')
+            $patchCount += $otMatches.Count
+            Log "  Neutered browser new tab openTab function ($($otMatches.Count) matches)"
+        }
+    }
+
+    # Strip the literal title "New Integrated Browser"
+    $newIntBrowserTitle = '"New Integrated Browser"'
+    if ($content.Contains($newIntBrowserTitle)) {
+        $content = $content.Replace($newIntBrowserTitle, '""')
+        $patchCount++
+        Log "  Stripped 'New Integrated Browser' title"
+    }
+
+    # 3.8 Neuter the localhost link opener that auto-opens browser for local URLs
+    $localhostOpenerStr = 'static{this.OPENER_ID="workbench.integratedBrowser"}'
+    if ($content.Contains($localhostOpenerStr)) {
+        $content = $content.Replace('"workbench.integratedBrowser"', '"disabled.workbench.integratedBrowser"')
+        $patchCount++
+        Log "  Neutered localhost link opener"
+    }
+
+    # 3.9 Hide Browser from View menu
+    $viewMenuBrowserPattern = '[a-zA-Z0-9_\$]+\.appendMenuItem\([a-zA-Z0-9_\$]+\.MenubarViewMenu,\{group:"4_auxbar",command:\{id:[a-zA-Z0-9_\$]+\.OpenOrList,title:d\(\d+,null\)\},order:2\}\);'
+    $vmbMatches = [regex]::Matches($content, $viewMenuBrowserPattern)
+    if ($vmbMatches.Count -gt 0) {
+        $content = [regex]::Replace($content, $viewMenuBrowserPattern, '/* Browser MenubarViewMenu item removed */')
+        $patchCount += $vmbMatches.Count
+        Log "  Removed Browser from MenubarViewMenu ($($vmbMatches.Count) matches)"
+    }
+
+    # 3.10 Neuter the Browser Editor View Component (Js.createEditor)
+    # If anything ever tries to instantiate the browser editor pane, break it immediately
+    $jsCreateEditorPattern = '(createEditor\([a-zA-Z0-9_]+\)\{let [a-zA-Z0-9_]+=this\._register\(this\.contextKeyService\.createScoped\([a-zA-Z0-9_]+\)\);)'
+    $jsMatches = [regex]::Matches($content, $jsCreateEditorPattern)
+    if ($jsMatches.Count -gt 0) {
+        if (-not $content.Contains('Error("Browser editor disabled")')) {
+            $content = [regex]::Replace($content, $jsCreateEditorPattern, 'createEditor(e){ throw new Error("Browser editor disabled"); let t=this._register(this.contextKeyService.createScoped(e));')
+            $patchCount += $jsMatches.Count
+            Log "  Neutered Browser Editor Component (Js.createEditor) ($($jsMatches.Count) matches)"
+        }
+    }
+
+    # 3.11 Disable the browser editor type registration for *.html files
+    # First, repair any syntax errors from previous runs where s?.false was injected
+    if ($content.Contains('(s?.false&&')) {
+        $content = $content.Replace('(s?.false&&', '(false)&&')
+        $patchCount++
+        Log "  Repaired (s?.false syntax error in $($fileObj.Name)"
+    } elseif ($content.Contains('s?.false')) {
+        $content = $content.Replace('s?.false', 'false')
+        $patchCount++
+        Log "  Repaired s?.false syntax error in $($fileObj.Name)"
+    }
+
+    # Neutering *.html default editor assignment to browser editor
+    $htmlBrowserPattern = '\["\*\.html"\]\s*=\s*"workbench\.editor\.browser"'
+    $htmlMatches = [regex]::Matches($content, $htmlBrowserPattern)
+    if ($htmlMatches.Count -gt 0) {
+        $content = [regex]::Replace($content, $htmlBrowserPattern, '["*.html"]="disabled.workbench.editor.browser"')
+        $patchCount += $htmlMatches.Count
+        Log "  Disabled browser editor registration for *.html files ($($htmlMatches.Count) matches)"
+    }
+
     # 4. Zero View Menu keybinding
     # Regex Explanation:
     # `("Browser"[^}]+keybinding:\{[^}]+?primary:)\d+` -> Matches the "Browser" command title, looks ahead for its keybinding block, 
@@ -425,7 +551,8 @@ foreach ($editor in $editors) {
         $nlsTitles = @(
             "New Browser Tab", "New Browser", "Open Browser", "Focus Browser Location Bar", "Open cursor.com in Browser", 
             "Reload Browser Tab", "Focus or Open Browser", "Simple Browser: Show", 
-            "Open Port in Browser"
+            "Open Port in Browser", "New Integrated Browser", "Close All Browser Tabs",
+            "Close All Browser Tabs in Group", "New Tab", "Browser"
         )
         foreach ($nt in $nlsTitles) {
             $searchString = '"' + $nt + '"'
@@ -442,7 +569,62 @@ foreach ($editor in $editors) {
         }
     }
     
-    # 5. Keybindings.json universal overrides
+    # 7.5 Patch editor settings.json to disable the integrated browser via config
+    if ($editor.Name -eq "VS Code") {
+        $settingsPath = "$env:APPDATA\Code\User\settings.json"
+    } elseif ($editor.Name -match "Windsurf") {
+        $settingsPath = "$env:APPDATA\Windsurf\User\settings.json"
+    } elseif ($editor.Name -match "Cursor") {
+        $settingsPath = "$env:APPDATA\Cursor\User\settings.json"
+    } elseif ($editor.Name -match "Antigravity") {
+        $settingsPath = "$env:APPDATA\Antigravity\User\settings.json"
+    } else {
+        $settingsPath = $null
+    }
+    
+    if ($settingsPath -and (Test-Path (Split-Path $settingsPath))) {
+        $browserSettings = @{
+            "workbench.browser.showInTitleBar"    = $false
+            "workbench.browser.enableChatTools"   = $false
+            "workbench.browser.openLocalhostLinks" = $false
+            "workbench.browser.enableRemoteProxy" = $false
+        }
+        
+        if (Test-Path $settingsPath) {
+            $settingsBackup = "$backupDir\$($editor.Name -replace '[^\w]','_')_settings.json.$timestamp.bak"
+            Copy-Item $settingsPath $settingsBackup
+            
+            $settingsContent = [System.IO.File]::ReadAllText($settingsPath)
+            # Remove trailing comments-only content and parse
+            try {
+                # Strip single-line comments for parsing (VS Code settings allow // comments)
+                $cleanJson = $settingsContent -replace '//.*$', '' -replace ',\s*}', '}' -replace ',\s*]', ']'
+                $settingsObj = $cleanJson | ConvertFrom-Json
+            } catch {
+                # If parsing fails, start fresh with a wrapper
+                $settingsObj = [PSCustomObject]@{}
+            }
+        } else {
+            $settingsObj = [PSCustomObject]@{}
+        }
+        
+        $settingsChanged = $false
+        foreach ($key in $browserSettings.Keys) {
+            $val = $browserSettings[$key]
+            if (-not ($settingsObj.PSObject.Properties.Name -contains $key) -or $settingsObj.$key -ne $val) {
+                $settingsObj | Add-Member -MemberType NoteProperty -Name $key -Value $val -Force
+                $settingsChanged = $true
+            }
+        }
+        
+        if ($settingsChanged) {
+            $newSettingsJson = $settingsObj | ConvertTo-Json -Depth 10
+            [System.IO.File]::WriteAllText($settingsPath, $newSettingsJson, $utf8NoBom)
+            Log "  Patched settings.json with browser disable flags"
+        }
+    }
+
+    # 8. Keybindings.json universal overrides
     $kbPath = $editor.Keybindings
     if (-not (Test-Path (Split-Path $kbPath))) {
         New-Item -ItemType Directory -Path (Split-Path $kbPath) -Force | Out-Null
@@ -467,7 +649,28 @@ foreach ($editor in $editors) {
         "composer.closeBrowserTab",
         "workbench.action.openBrowserEditor",
         "workbench.action.focusOrOpenBrowserEditor",
-        "glass.openBrowserTab"
+        "glass.openBrowserTab",
+        "workbench.action.browser.open",
+        "workbench.action.browser.open.fromNewTabButton",
+        "workbench.action.browser.openFile",
+        "workbench.action.browser.newTab",
+        "workbench.action.browser.quickOpen",
+        "workbench.action.browser.openOrList",
+        "workbench.action.browser.closeAll",
+        "workbench.action.browser.closeAllInGroup",
+        "workbench.action.browser.goBack",
+        "workbench.action.browser.goForward",
+        "workbench.action.browser.reload",
+        "workbench.action.browser.hardReload",
+        "workbench.action.browser.focusUrlInput",
+        "workbench.action.browser.openExternal",
+        "workbench.action.browser.toggleDevTools",
+        "workbench.action.browser.addElementToChat",
+        "workbench.action.browser.addConsoleLogsToChat",
+        "workbench.action.browser.addScreenshotToChat",
+        "workbench.action.browser.addAreaScreenshotToChat",
+        "workbench.action.browser.addFullPageScreenshotToChat",
+        "workbench.action.browser.showFind"
     )
     
     $kbContent = "// Universal browser removal overrides`r`n["
@@ -487,8 +690,26 @@ foreach ($editor in $editors) {
     
     [System.IO.File]::WriteAllText($kbPath, $kbContent, $utf8NoBom)
     Log "Updated keybindings"
+
+    # 9. Invalidate V8 bytecode cache for this editor
+    $cacheBases = @(
+        "$env:APPDATA\Code\CachedData",
+        "$env:APPDATA\Code\Code Cache",
+        "$env:APPDATA\Antigravity\CachedData",
+        "$env:APPDATA\Antigravity\Code Cache",
+        "$env:APPDATA\Cursor\CachedData",
+        "$env:APPDATA\Cursor\Code Cache",
+        "$env:APPDATA\Windsurf\CachedData",
+        "$env:APPDATA\Windsurf\Code Cache"
+    )
+    foreach ($cb in $cacheBases) {
+        if (Test-Path $cb) {
+            Remove-Item -Path "$cb\*" -Recurse -Force -ErrorAction SilentlyContinue
+            Log "  Cleared bytecode cache: $cb"
+        }
+    }
 }
 
 Log ""
 Log "=== Finished Universal Patching ==="
-Log "Please restart all open instances of VS Code, Windsurf, and Cursor to apply the changes."
+Log "Please restart all open instances of VS Code, Windsurf, Antigravity IDE, and Cursor to apply the changes."
